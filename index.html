@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Math Quiz</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Nunito', sans-serif;
+        }
+        .math-card {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            transition: transform 0.3s ease-in-out;
+        }
+        .btn {
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-start {
+            background: linear-gradient(45deg, #68D391, #38B2AC);
+        }
+        .pulse {
+            animation: pulse-animation 2s infinite;
+        }
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(255, 165, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 165, 0, 0); }
+        }
+        .score-update {
+            animation: score-pop 0.5s ease-in-out;
+        }
+        @keyframes score-pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.5); color: #38A169; } /* green-500 */
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+
+    <div id="compatibility-notice" class="hidden fixed top-0 left-0 w-full bg-red-500 text-white p-4 text-center z-50">
+        Your browser does not support the Web Speech API. Please try Google Chrome.
+    </div>
+
+    <div class="math-card w-full max-w-2xl mx-auto bg-white rounded-2xl p-6 md:p-10 text-center">
+        <h1 class="text-4xl md:text-5xl font-bold text-gray-800 mb-2">Math Adventure!</h1>
+        <p id="status" class="text-xl text-gray-500 mb-6 min-h-[2.5rem]">Press "Start Game" to begin!</p>
+
+        <div id="game-area" class="hidden">
+            <div class="bg-teal-100 border-l-4 border-teal-500 text-teal-700 p-6 rounded-lg mb-6">
+                <p id="question" class="text-5xl md:text-7xl font-bold"></p>
+            </div>
+            
+            <div id="explanation-box" class="hidden bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 rounded-lg mb-6 text-left">
+                <h4 class="font-bold">Let's figure it out!</h4>
+                <p id="explanation-text"></p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-lg mb-6">
+                <div class="bg-green-100 p-4 rounded-lg">
+                    <h3 class="font-bold text-green-800">Score:</h3>
+                    <p id="score" class="text-2xl font-semibold text-green-600">0</p>
+                </div>
+                <div class="bg-red-100 p-4 rounded-lg">
+                    <h3 class="font-bold text-red-800">Wrong:</h3>
+                    <p id="wrong-answers" class="text-2xl font-semibold text-red-600">0</p>
+                </div>
+                <div class="bg-blue-100 p-4 rounded-lg sm:col-span-1">
+                    <h3 class="font-bold text-blue-800">Your Answer:</h3>
+                    <p id="user-answer" class="text-2xl font-semibold text-blue-600 h-8">-</p>
+                </div>
+            </div>
+
+             <div id="mic-status" class="text-orange-500 font-semibold text-xl h-8 flex items-center justify-center mb-6">
+                <span id="mic-text"></span>
+            </div>
+
+            <div class="flex justify-center items-center space-x-4">
+                <button id="prev-button" class="btn bg-gray-300 text-gray-700 font-bold py-3 px-6 rounded-full">Previous</button>
+                <button id="next-button" class="btn bg-blue-500 text-white font-bold py-3 px-6 rounded-full">Next / Skip</button>
+            </div>
+        </div>
+
+        <div id="start-button-container" class="mt-8">
+            <button id="start-button" class="btn btn-start text-white font-bold py-4 px-10 text-2xl rounded-full">
+                Start Game
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Element References ---
+        const startButton = document.getElementById('start-button');
+        const startButtonContainer = document.getElementById('start-button-container');
+        const gameArea = document.getElementById('game-area');
+        const questionEl = document.getElementById('question');
+        const scoreEl = document.getElementById('score');
+        const wrongAnswersEl = document.getElementById('wrong-answers');
+        const statusEl = document.getElementById('status');
+        const userAnswerEl = document.getElementById('user-answer');
+        const compatibilityNotice = document.getElementById('compatibility-notice');
+        const micStatusEl = document.getElementById('mic-status');
+        const micTextEl = document.getElementById('mic-text');
+        const prevButton = document.getElementById('prev-button');
+        const nextButton = document.getElementById('next-button');
+        const explanationBox = document.getElementById('explanation-box');
+        const explanationTextEl = document.getElementById('explanation-text');
+
+        // --- Speech API Setup ---
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+        let isListening = false;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+        } else {
+            compatibilityNotice.classList.remove('hidden');
+            startButton.disabled = true;
+        }
+
+        // --- Game State ---
+        let score = 0;
+        let wrongAnswers = 0;
+        let questionHistory = [];
+        let currentQuestionIndex = -1;
+        let isReviewing = false;
+        const correctPhrases = [
+            "That's right!", "Great job!", "You got it!", "Awesome!", "Correct!", "You're a math star!", "Super!", "Well done!"
+        ];
+
+        // --- Utility Functions ---
+        function speak(text, options = {}) {
+            const { pitch = 1.1, rate = 0.95, onEndCallback = null } = options;
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.pitch = pitch;
+            utterance.rate = rate;
+            utterance.onend = () => {
+                if (onEndCallback) onEndCallback();
+            };
+            window.speechSynthesis.speak(utterance);
+        }
+
+        function getRandomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+        
+        function parseNumber(text) {
+            const wordsToNumbers = {
+                'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+                'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+                'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,
+                'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20
+            };
+            const cleanedText = text.toLowerCase().replace(/[^a-z0-9\s-]/g, '');
+            const words = cleanedText.split(/[\s,-]+/);
+            for (const word of words) {
+                if (!isNaN(parseInt(word))) return parseInt(word);
+                if (wordsToNumbers.hasOwnProperty(word)) return wordsToNumbers[word];
+            }
+            return null;
+        }
+
+        // --- Game Logic ---
+        function generateQuestion() {
+            isReviewing = false;
+            userAnswerEl.textContent = '-';
+            explanationBox.classList.add('hidden');
+            statusEl.textContent = "What's the answer?";
+            statusEl.classList.remove('text-red-500', 'text-green-500');
+
+            const operator = Math.random() > 0.5 ? '+' : '-';
+            let num1 = getRandomInt(1, 20);
+            let num2 = getRandomInt(1, 10);
+
+            if (operator === '-' && num1 < num2) {
+                [num1, num2] = [num2, num1];
+            }
+
+            const question = { num1, num2, operator, answer: (operator === '+') ? num1 + num2 : num1 - num2 };
+            questionHistory.push(question);
+            currentQuestionIndex = questionHistory.length - 1;
+            displayQuestion(currentQuestionIndex);
+        }
+
+        function displayQuestion(index) {
+            const q = questionHistory[index];
+            questionEl.textContent = `${q.num1} ${q.operator} ${q.num2} = ?`;
+            updateNavButtons();
+
+            if (!isReviewing) {
+                const questionSpeech = `What is ${q.num1} ${q.operator === '+' ? 'plus' : 'minus'} ${q.num2}?`;
+                speak(questionSpeech, { onEndCallback: startListening });
+            } else {
+                statusEl.textContent = `Reviewing: The answer was ${q.answer}`;
+                userAnswerEl.textContent = q.userAnswer !== undefined ? q.userAnswer : '-';
+            }
+        }
+
+        function createExplanation(q) {
+            if (q.operator === '+') {
+                const bigger = Math.max(q.num1, q.num2);
+                const smaller = Math.min(q.num1, q.num2);
+                return `To solve ${q.num1} plus ${q.num2}, you can start with the bigger number, ${bigger}, and count up ${smaller} more times.`;
+            } else {
+                return `For ${q.num1} minus ${q.num2}, you can think of it like this: start at ${q.num1} and count backward ${q.num2} times.`;
+            }
+        }
+
+        function checkAnswer(userAnswer) {
+            const currentQuestion = questionHistory[currentQuestionIndex];
+            currentQuestion.userAnswer = userAnswer;
+            userAnswerEl.textContent = userAnswer;
+
+            if (userAnswer === currentQuestion.answer) {
+                score++;
+                scoreEl.textContent = score;
+                scoreEl.classList.add('score-update');
+                setTimeout(() => scoreEl.classList.remove('score-update'), 500);
+                
+                const randomPhrase = correctPhrases[Math.floor(Math.random() * correctPhrases.length)];
+                statusEl.textContent = randomPhrase;
+                statusEl.classList.add('text-green-500');
+                
+                speak(randomPhrase, { pitch: 1.4, rate: 1.1, onEndCallback: generateQuestion });
+            } else {
+                wrongAnswers++;
+                wrongAnswersEl.textContent = wrongAnswers;
+                statusEl.textContent = "Not quite...";
+                statusEl.classList.add('text-red-500');
+                const explanation = createExplanation(currentQuestion);
+                explanationTextEl.textContent = explanation;
+                explanationBox.classList.remove('hidden');
+
+                const feedbackSpeech = `Not quite. The correct answer was ${currentQuestion.answer}. ${explanation} Let's try another one.`;
+                speak(feedbackSpeech, { pitch: 1.0, rate: 0.95, onEndCallback: () => {
+                    setTimeout(generateQuestion, 2000);
+                }});
+            }
+        }
+
+        function startListening() {
+            if (isListening || isReviewing) return;
+            isListening = true;
+            micTextEl.textContent = "Listening...";
+            micStatusEl.classList.add('pulse');
+            recognition.start();
+        }
+
+        function stopListening() {
+            if (!isListening) return;
+            isListening = false;
+            micTextEl.textContent = "";
+            micStatusEl.classList.remove('pulse');
+            recognition.stop();
+        }
+
+        function updateNavButtons() {
+            prevButton.disabled = currentQuestionIndex <= 0;
+            nextButton.textContent = (currentQuestionIndex === questionHistory.length - 1) ? 'Next / Skip' : 'Next';
+        }
+
+        // --- Event Handlers ---
+        startButton.addEventListener('click', () => {
+            score = 0;
+            wrongAnswers = 0;
+            questionHistory = [];
+            currentQuestionIndex = -1;
+            scoreEl.textContent = '0';
+            wrongAnswersEl.textContent = '0';
+            
+            startButtonContainer.classList.add('hidden');
+            gameArea.classList.remove('hidden');
+
+            speak("Welcome to Math Adventure!", { onEndCallback: generateQuestion });
+        });
+
+        prevButton.addEventListener('click', () => {
+            if (currentQuestionIndex > 0) {
+                stopListening();
+                isReviewing = true;
+                currentQuestionIndex--;
+                explanationBox.classList.add('hidden');
+                displayQuestion(currentQuestionIndex);
+            }
+        });
+
+        nextButton.addEventListener('click', () => {
+            stopListening();
+            if (currentQuestionIndex < questionHistory.length - 1) {
+                isReviewing = true;
+                currentQuestionIndex++;
+                explanationBox.classList.add('hidden');
+                displayQuestion(currentQuestionIndex);
+            } else {
+                speak("Skipping to the next one.", { onEndCallback: generateQuestion });
+            }
+        });
+
+        if (recognition) {
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                stopListening();
+                const number = parseNumber(transcript);
+
+                if (number !== null) {
+                    checkAnswer(number);
+                } else {
+                    speak("I didn't catch a number. Let's try that question again.", { onEndCallback: () => {
+                        displayQuestion(currentQuestionIndex);
+                    }});
+                }
+            };
+
+            recognition.onspeechend = () => stopListening();
+            recognition.onerror = (event) => {
+                stopListening();
+                if (event.error !== 'no-speech') {
+                    speak("I had a little trouble hearing you. Let's try again.", { onEndCallback: () => {
+                         displayQuestion(currentQuestionIndex);
+                    }});
+                }
+            };
+        }
+    </script>
+</body>
+</html>
